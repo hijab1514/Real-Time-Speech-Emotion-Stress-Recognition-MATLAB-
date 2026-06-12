@@ -1,301 +1,360 @@
-# Real-Time Speech Emotion & Stress Recognition (MATLAB)
+# Real-Time Speech Emotion & Stress Recognition
 
-Hybrid **CNN–LSTM** emotion classifier + rule-based **stress** engine + **explainable** output, wrapped in an App Designer–style GUI. Built as **three independent modules** so each can be developed, tested, and graded on its own.
+> Hybrid **1D CNN–BiLSTM** speech-emotion classifier + an independent **acoustic stress** index + **occlusion-based Explainable AI**, wrapped in a MATLAB **App Designer** GUI. Engineered as three decoupled modules — signal processing, AI, and UI.
 
-```
-+sigproc/    Module 1 — Signal Processing Engine   (preprocess + features)
-+ai/     Module 2 — AI Prediction Engine        (CNN-LSTM + stress + XAI)
-+gui/    Module 3 — GUI                          (uifigure app; thin layer)
-```
+![MATLAB](https://img.shields.io/badge/MATLAB-R2021b%2B-orange)
+![Audio Toolbox](https://img.shields.io/badge/Audio%20Toolbox-required-blue)
+![Deep Learning Toolbox](https://img.shields.io/badge/Deep%20Learning%20Toolbox-required-blue)
+![Status](https://img.shields.io/badge/status-final--year%20project-success)
 
-The MATLAB **package folders** (the `+` prefix) enforce the separation: the GUI can only reach the engines through `sigproc.*` and `ai.*` calls, so no analysis logic leaks into the interface. That boundary is the thing examiners reward.
+Speak into the mic or upload a clip, and the system returns **(1)** the emotion with a confidence score, **(2)** a Low/Moderate/High stress level, and **(3)** a plain-language explanation of *why* — alongside live waveform, spectrogram and MFCC views.
 
----
-
-## 0. One correction you should make before building (read this)
-
-Your brief lists **six "emotions": Happy, Sad, Angry, Neutral, Fear, Stress.** Stress is not an emotion category at the same level as the other five — it is a separate *arousal/state* dimension, and **none of RAVDESS, TESS, CREMA-D, or SAVEE contain a "stress" label.** If you train one 6-class classifier including "Stress", you will have no labelled data for that class and the model will be indefensible under questioning.
-
-The architecture here does what your own brief implicitly does in sections 6 vs 7: **two separate outputs.**
-
-| Output | Method | Classes | Data |
-|---|---|---|---|
-| **Emotion** | supervised CNN-LSTM | Angry, Happy, Sad, Neutral, Fear (+ optional Disgust/Surprise) | RAVDESS/CREMA-D etc. |
-| **Stress** | unsupervised acoustic index | Low / Moderate / High | computed from features; **calibrate on your own recordings** |
-
-State this explicitly in the report. "Stress is estimated from validated acoustic correlates (pitch instability, energy variation, speaking rate), not from a labelled corpus, and the thresholds are calibrated on N relaxed-vs-stressed recordings" is a defensible sentence. "We trained a 6-class emotion+stress CNN" is not.
+<!-- Drop your GUI screenshot here -->
+<p align="center"><img src="docs/screenshot.png" alt="SER GUI" width="820"></p>
 
 ---
 
-## 1. System architecture
-
-```
-                          ┌─────────────────────────────┐
-                          │   Module 3 — GUI (+gui)      │
-                          │  uifigure: record / upload,  │
-                          │  plots, panels, history,     │
-                          │  export                      │
-                          └───────────────┬─────────────┘
-                                          │ calls only sigproc.* / ai.*
-        ┌─────────────────────────────────┴─────────────────────────────┐
-        │                                                                 │
-┌───────▼────────────────────────────┐        ┌────────────────────────▼──────────────────┐
-│   Module 1 — DSP Engine (+sigproc)      │        │   Module 2 — AI Engine (+ai)               │
-│                                     │        │                                            │
-│  preprocessAudio                    │        │  buildCNNLSTM      (network definition)    │
-│   mono→resample→pre-emph→denoise    │ feat   │  trainEmotionModel (training pipeline)     │
-│   →VAD→normalize                    ├───────►│  predictEmotion    (inference + scores)    │
-│  extractFeatures                    │        │  stressEngine      (3-level acoustic index)│
-│   MFCC/Δ/ΔΔ, spectral, pitch, ZCR,  │        │  explainPrediction (occlusion XAI + text)  │
-│   energy → sequence + summary       │        │                                            │
-└─────────────────────────────────────┘        └────────────────────────────────────────────┘
-        ▲                                                         │
-        │                                              models/emotionModel.mat
-   audio in (mic / file)                               reports/history.csv + report cards
-```
-
-**Module responsibilities**
-
-- **Audio Acquisition** (`+utils/recordMic`, `loadAudioFile`) — mic capture and file reading; the only code that touches hardware/disk for input.
-- **Audio Processing** (`sigproc.preprocessAudio`) — turns arbitrary input into a clean, 16 kHz, normalised, speech-only signal plus framing metadata.
-- **Feature Extraction** (`sigproc.extractFeatures`) — produces two products from one pass: a per-frame **sequence** `[F×T]` for the network, and a per-utterance **summary** for the stress engine and the explainer.
-- **Deep Learning** (`ai.buildCNNLSTM`, `trainEmotionModel`, `predictEmotion`) — define, train, run the classifier.
-- **Stress** (`ai.stressEngine`) — independent rule-based subsystem.
-- **Explainable AI** (`ai.explainPrediction`) — occlusion importance + plain-language reasons.
-- **Storage/Reporting** (`utils.exportReport`) — CSV history + text report cards in `reports/`.
-- **GUI** (`gui.SERApp`) — orchestration and display only.
+## Table of contents
+- [Features](#features)
+- [System architecture](#system-architecture)
+- [How the model works](#how-the-model-works)
+- [Data flow](#data-flow)
+- [Quickstart](#quickstart)
+- [Project structure](#project-structure)
+- [Component diagram](#component-diagram)
+- [Inference sequence](#inference-sequence)
+- [Results](#results)
+- [Explainability & stress](#explainability--stress)
+- [Troubleshooting](#troubleshooting)
+- [Limitations](#limitations)
+- [Roadmap](#roadmap)
+- [Thesis figure captions](#thesis-figure-captions)
+- [Dataset & citation](#dataset--citation)
+- [Design document](#design-document)
 
 ---
 
-## 2. Development roadmap
+## Features
 
-| Phase | Objective | Key deliverable | MATLAB tools | Est. time |
-|---|---|---|---|---|
-| 1 | Dataset prep | class folders of `.wav`, balanced | Audio Toolbox, `audioDatastore` | 3–5 days |
-| 2 | Preprocessing | `sigproc.preprocessAudio` validated | `resample`, `detectSpeech`, `stft` | 4–6 days |
-| 3 | Feature extraction | `sigproc.extractFeatures` + smoke tests | `audioFeatureExtractor`, `pitch` | 5–7 days |
-| 4 | Model training | trained `emotionModel.mat`, confusion matrix | Deep Learning Toolbox, `trainNetwork` | 7–10 days |
-| 5 | Stress engine | `ai.stressEngine` + calibration set | base MATLAB | 3–5 days |
-| 6 | Explainable AI | `ai.explainPrediction` | Deep Learning Toolbox | 3–4 days |
-| 7 | GUI | `gui.SERApp` wired to engines | App Designer / `uifigure` | 6–8 days |
-| 8 | Test + deploy | test suite green, demo script, packaged app | `matlab.unittest`, `compiler` (opt.) | 4–6 days |
-
-Total ≈ **6–8 weeks** for one developer. Build vertically: get one file end-to-end (Phase 2→3→4 on a tiny subset) before scaling the dataset.
+- **5-class emotion recognition** — Neutral, Happy, Sad, Angry, Fear — via a hybrid 1D CNN + BiLSTM trained on RAVDESS.
+- **Independent stress engine** — Low/Moderate/High from acoustic correlates (pitch instability, energy variation, speaking rate, spectral flux), deliberately *not* a label on the emotion model.
+- **Explainable AI** — occlusion sensitivity ranks which feature groups drove each prediction, then renders a human-readable reason.
+- **Live + offline input** — microphone capture or `.wav` / `.mp3` / `.flac` upload.
+- **Rich visualization** — waveform, spectrogram, MFCC heatmap, confidence + stress gauges, prediction-history table.
+- **Reporting** — per-run text report cards + an appended `history.csv`.
+- **Modular, testable codebase** — three MATLAB packages with a `matlab.unittest` smoke suite that runs without a trained model.
 
 ---
 
-## 3. Dataset selection
+## System architecture
 
-| Dataset | Samples (approx) | Emotions | Quality | Difficulty | Notes |
-|---|---|---|---|---|---|
-| **RAVDESS** | ~1,440 speech | 8 (incl. calm, surprise, disgust) | studio, clean | easy–medium | 24 actors, balanced, gender-balanced; best starting point |
-| **TESS** | ~2,800 | 7 | clean | easy | only 2 (older female) speakers → weak speaker generalisation |
-| **CREMA-D** | ~7,440 | 6 | varied | medium–hard | 91 speakers, diverse → best for generalisation |
-| **SAVEE** | ~480 | 7 | clean | medium | only 4 male speakers → biased |
+Seven layers, from microphone to stored report. The GUI reaches the engines only through `sigproc.*` and `ai.*`, so no analysis logic leaks into the interface.
 
-**Recommendation:** train on **RAVDESS + CREMA-D** (clean balance + speaker diversity), keep **TESS** or **SAVEE** as an unseen test set to show cross-corpus generalisation — a strong point in a viva. Map all corpora to a shared 5-class label set (Angry, Happy, Sad, Neutral, Fear); drop classes that don't appear in all sets, or keep them only where present and note the imbalance. All are actor-portrayed (acted) emotion — say so; it is the standard limitation of the field.
+```mermaid
+flowchart TB
+    subgraph L1["1 · Input Layer  ·  +utils"]
+        A1["Microphone capture"]
+        A2["File upload<br/>.wav / .mp3 / .flac"]
+    end
+    subgraph L2["2 · Signal Processing  ·  +sigproc"]
+        B1["Mono + Resample 16 kHz"]
+        B2["Pre-emphasis + Denoise"]
+        B3["VAD + Silence removal"]
+        B4["Normalize + Frame"]
+    end
+    subgraph L3["3 · Feature Layer  ·  +sigproc"]
+        C1["MFCC + Delta + Delta-Delta"]
+        C2["Spectral: centroid / flux / rolloff / entropy"]
+        C3["Prosodic: pitch / energy / ZCR"]
+        C4["Sequence [F x T] + summary vector"]
+    end
+    subgraph L4["4 · AI Layer  ·  +ai"]
+        D1["1D CNN — feature learning"]
+        D2["BiLSTM — temporal modeling"]
+        D3["Dense + Softmax — emotion"]
+        D4["Stress engine — acoustic index"]
+    end
+    subgraph L5["5 · Explainability  ·  +ai"]
+        E1["Occlusion sensitivity"]
+        E2["Natural-language reasoning"]
+    end
+    subgraph L6["6 · Presentation  ·  +gui"]
+        F1["Waveform / Spectrogram / MFCC"]
+        F2["Emotion + Confidence + Stress"]
+        F3["Explanation + History"]
+    end
+    subgraph L7["7 · Storage  ·  +utils"]
+        G1[("history.csv")]
+        G2[("PDF / text reports")]
+    end
 
----
+    L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7
 
-## 4. Preprocessing pipeline (`sigproc.preprocessAudio`)
+    classDef input fill:#1565C0,color:#fff,stroke:#0D47A1;
+    classDef proc  fill:#2E7D32,color:#fff,stroke:#1B5E20;
+    classDef ai    fill:#EF6C00,color:#fff,stroke:#E65100;
+    classDef xai   fill:#6A1B9A,color:#fff,stroke:#4A148C;
+    classDef ui    fill:#37474F,color:#fff,stroke:#263238;
+    classDef store fill:#616161,color:#fff,stroke:#424242;
 
-| Step | Why | MATLAB | Output |
-|---|---|---|---|
-| Mono mix | one channel for analysis | `mean(x,2)` | `[N×1]` |
-| Resample 16 kHz | fix rate across corpora; speech band fits | `resample` | `[N×1]` |
-| Pre-emphasis (0.97) | boost HF, flatten spectral tilt | `filter([1 -0.97],1,x)` | `[N×1]` |
-| Spectral subtraction | remove stationary background noise | `stft`/`istft` | denoised |
-| VAD / silence removal | keep speech, drop silence/leading noise | `detectSpeech` | trimmed |
-| Peak normalize | level invariance across mics | `x/max(abs(x))` | `[-1,1]` |
-
-Energy-gate fallback is built in if `detectSpeech` is unavailable. Framing uses 25 ms window / 10 ms hop (`hann`) — the standard for speech.
-
----
-
-## 5. Feature extraction (`sigproc.extractFeatures`)
-
-Per-frame **sequence** (channels of `feat.seq`): MFCC(13) + Δ(13) + ΔΔ(13), spectral centroid / rolloff / flux / spread / entropy, pitch, ZCR, short-time energy, harmonic ratio.
-
-| Feature | Captures | Meaning |
-|---|---|---|
-| **MFCC** | timbre / vocal-tract shape | DCT of log mel energies; the workhorse SER feature |
-| **Δ / ΔΔ MFCC** | how timbre moves | 1st/2nd time derivatives → dynamics |
-| **Pitch (F0)** | intonation, arousal | fundamental frequency; high/variable under anger, fear, stress |
-| **Short-time energy / RMS** | loudness | high in anger, low in sadness |
-| **ZCR** | voicing / noisiness | high for fricatives/noisy speech |
-| **Spectral centroid/rolloff** | brightness | shifts up with tension/arousal |
-| **Spectral flux** | rate of spectral change | high when articulation is rapid |
-| **Harmonic ratio** | voice quality | breathy/tense voice changes harmonicity |
-
-Per-utterance **summary** (`feat.summary`) drives stress + XAI: `pitchMean/Std/Range`, `energyMean/Std/CV`, `rmsMean`, `zcrMean`, `centroidMean`, `fluxMean`, `speakingRate`, `duration`.
-
-LPC/formants are easy to add (`lpc`, then `roots`→ formant frequencies) if your rubric wants them explicitly — flagged in the report template but omitted from the live path to keep latency low.
-
----
-
-## 6. Deep learning model (`ai.buildCNNLSTM`)
-
-```
-sequenceInput(F)
- → conv1d(5, 64) → BN → ReLU → maxpool1d(2)
- → conv1d(5,128) → BN → ReLU → maxpool1d(2)
- → biLSTM(128, last)
- → dropout(0.3)
- → fc(64) → ReLU → fc(numClasses) → softmax → classification
+    class A1,A2 input;
+    class B1,B2,B3,B4,C1,C2,C3,C4 proc;
+    class D1,D2,D3,D4 ai;
+    class E1,E2 xai;
+    class F1,F2,F3 ui;
+    class G1,G2 store;
 ```
 
-- **CNN front-end:** learns local spectro-temporal patterns and halves the time axis twice (cheaper, denoised input to the LSTM).
-- **BiLSTM:** models how those patterns evolve over the utterance, both directions (emotion cues are non-causal).
-- **Training:** Adam, lr 1e-3, piecewise decay ×0.5 every 15 epochs, 40 epochs, batch 32, gradient clip 1, right-padding, validation every 20 iters. Defined in `ai.trainEmotionModel`.
-- **Version note:** `convolution1dLayer`/`maxPooling1dLayer` need **R2021b+**. For **R2024a+**, swap `softmax+classificationLayer`/`trainNetwork` for `trainnet(...,"crossentropy")` — same graph otherwise.
-
-Per-feature standardisation (`mu`,`sigma`) is computed on the training set and **saved with the model**, then re-applied at inference — a common bug source if forgotten.
+> **Colour key:** blue = input · green = processing/feature · orange = AI · purple = explainability · gray = storage.
 
 ---
 
-## 7. Stress detection engine (`ai.stressEngine`)
+## How the model works
 
-Composite index in `[0,1]` from normalised acoustic correlates, weighted:
+The hybrid network turns a per-frame feature sequence into one emotion label. The CNN front-end learns local spectro-temporal patterns and halves the time axis twice; the BiLSTM models how those patterns evolve across the whole utterance (both directions, since emotional cues are non-causal).
 
-| Correlate | Weight | Direction |
-|---|---|---|
-| Pitch instability (F0 std) | 0.30 | ↑ stress |
-| Pitch level (F0 mean) | 0.15 | ↑ stress |
-| Energy variation (CV) | 0.25 | ↑ stress |
-| Speaking rate | 0.20 | ↑ stress |
-| Spectral flux | 0.10 | ↑ stress |
+```mermaid
+flowchart LR
+    X["Audio<br/>48 kHz mono"] --> P["Preprocess<br/>16 kHz · VAD · norm"]
+    P --> F["Feature sequence<br/>F=48 channels x T frames"]
+    F --> N["Standardize<br/>(mu, sigma from train)"]
+    N --> C1["Conv1D k=5, 64<br/>BN + ReLU"]
+    C1 --> M1["MaxPool1D /2"]
+    M1 --> C2["Conv1D k=5, 128<br/>BN + ReLU"]
+    C2 --> M2["MaxPool1D /2"]
+    M2 --> R["BiLSTM 128<br/>output: last"]
+    R --> DR["Dropout 0.3"]
+    DR --> FC1["Dense 64 + ReLU"]
+    FC1 --> FC2["Dense = numClasses"]
+    FC2 --> SM["Softmax"]
+    SM --> Y["Emotion + confidence<br/>Neutral · Happy · Sad · Angry · Fear"]
 
-`<0.40` Low · `0.40–0.70` Moderate · `≥0.70` High. The normalisation ranges in `local_defaultCalib` are **placeholders — replace them** with values measured on your calibration recordings (relaxed reading vs. timed-task speech). Returns a component table so the GUI/XAI can show *which* correlate drove the level.
+    classDef io fill:#1565C0,color:#fff,stroke:#0D47A1;
+    classDef net fill:#EF6C00,color:#fff,stroke:#E65100;
+    class X,P,F,N io;
+    class C1,M1,C2,M2,R,DR,FC1,FC2,SM,Y net;
+```
 
----
-
-## 8. Explainable AI (`ai.explainPrediction`)
-
-Two complementary techniques:
-
-1. **Occlusion importance (model-faithful).** Zero each feature *group* (MFCC, Δ, ΔΔ, pitch, energy, ZCR, spectral) in turn, re-run the net, record the drop in the predicted-class probability. Largest drop = most influential group for *this* clip. Grad-CAM is image-oriented and awkward on sequences; occlusion is the honest choice here.
-2. **Acoustic-profile reasoning (human-readable).** Compares summary features to expected emotion profiles → "high energy + fast speaking rate + high pitch variation", plus the stress index.
-
-Output is a ranked importance table + a formatted text block shown in the GUI's Explanation panel.
-
----
-
-## 9. GUI (`gui.SERApp`)
-
-Single window, programmatic `uifigure` (so it lives in source control). Layout:
-
-- **Controls bar:** Record (with duration), Stop, Upload, Export.
-- **Signal panel:** waveform + spectrogram.
-- **Features panel:** MFCC heatmap + Explanation text.
-- **Prediction panel:** emotion label, confidence gauge, stress gauge + level.
-- **History table:** time, file, emotion, confidence, stress, index.
-
-It calls only `sigproc.*`/`ai.*`/`utils.*`. If no model is present, stress + plots still work and emotion shows "no model" — so you can demo Module 1 before Module 2 is trained. If your rubric demands the literal `.mlapp`, recreate this layout in App Designer and paste the `analyse` logic into a callback; the engine calls are unchanged.
+The 48 feature channels = MFCC(13) + Delta(13) + Delta-Delta(13) + 5 spectral (centroid, rolloff, flux, spread, entropy) + pitch + ZCR + short-time energy + harmonic ratio. Standardization statistics are fit on the **training split only** and saved with the model, then re-applied at inference.
 
 ---
 
-## 10. File structure
+## Data flow
+
+```mermaid
+flowchart LR
+    U(("User")) -->|speech / file| AQ["Audio Acquisition"]
+    AQ -->|raw signal| DSP["DSP Engine<br/>+sigproc"]
+    DSP -->|clean signal| FE["Feature Engine<br/>+sigproc"]
+    FE -->|feature sequence| AI["CNN-LSTM<br/>+ai"]
+    FE -->|summary vector| ST["Stress Engine<br/>+ai"]
+    AI -->|emotion + scores| XAI["Explainable AI<br/>+ai"]
+    ST -->|stress index| XAI
+    XAI -->|results + reasons| GUI["GUI Dashboard<br/>+gui"]
+    GUI -->|append| DS[("history.csv / reports")]
+    GUI -->|display| U
+```
+
+---
+
+## Quickstart
+
+**Requirements:** MATLAB **R2021b+**, **Audio Toolbox**, **Deep Learning Toolbox**. A microphone for live capture (optional).
+
+```matlab
+% From the PROJECT ROOT (the folder that contains +sigproc, +ai, +gui).
+% Do NOT cd into a + folder — MATLAB packages resolve from the parent.
+
+% 0) sanity check (no dataset/model needed)
+runtests("tests/test_pipeline.m")
+
+% 1) confirm RAVDESS labels parse (recursive; point at the extracted root)
+ai.ravdessDatastore("datasets");
+
+% 2) train — saves models/emotionModel.mat automatically
+ai.trainEmotionModel("datasets")
+
+% 3) command-line end-to-end
+main_demo("datasets/.../Actor_05/03-01-05-01-01-01-05.wav")   % or main_demo to use the mic
+
+% 4) launch the GUI (auto-loads the trained model)
+gui.SERApp
+```
+
+To train on all eight RAVDESS emotions instead of five:
+
+```matlab
+ai.trainEmotionModel("datasets", ...
+    classes=["Neutral" "Calm" "Happy" "Sad" "Angry" "Fear" "Disgust" "Surprised"])
+```
+
+The stress engine and all plots work **without** a trained model; emotion + XAI require `models/emotionModel.mat`.
+
+---
+
+## Project structure
 
 ```
 SER_Stress_System/
-├── main_demo.m              end-to-end CLI run (no GUI) — best for testing
-├── +sigproc/                    MODULE 1: preprocessAudio, extractFeatures
-├── +ai/                     MODULE 2: buildCNNLSTM, trainEmotionModel,
-│                                      predictEmotion, stressEngine, explainPrediction
-├── +gui/                    MODULE 3: SERApp (uifigure)
+├── main_demo.m              end-to-end CLI run (no GUI) — best for quick tests
+├── +sigproc/                MODULE 1: preprocessAudio, extractFeatures
+├── +ai/                     MODULE 2: buildCNNLSTM, trainEmotionModel, predictEmotion,
+│                                      stressEngine, explainPrediction, ravdessDatastore
+├── +gui/                    MODULE 3: SERApp (uifigure dashboard)
 ├── +utils/                  recordMic, loadAudioFile, exportReport
 ├── models/                  emotionModel.mat (created by training)
 ├── datasets/                RAVDESS root: audio_speech_actors_01-24/Actor_NN/
 ├── reports/                 history.csv + report_*.txt (created at runtime)
 ├── tests/                   test_pipeline.m (matlab.unittest)
-└── docs/                    SRS, UML, report (templates below)
+└── docs/                    DESIGN.md (full engineering doc), screenshot.png
 ```
 
 ---
 
-## 11. Testing strategy
+## Component diagram
 
-- **Unit** (`tests/test_pipeline.m`): preprocessing output shape/normalisation, feature finiteness, stress index in `[0,1]`. Runs without a trained model.
-- **Integration:** `main_demo("clip.wav")` on a held-out file → expect a label + stress + report card.
-- **Model:** held-out validation accuracy + confusion matrix (in `trainEmotionModel`); cross-corpus test on the unseen set.
-- **GUI:** manual checklist — record auto-stops at N s; upload rejects cancel; export writes a file; "no model" path degrades gracefully.
-- **Performance:** time per clip (target < 1 s for ~4 s audio on CPU); note it is *near-real-time per utterance*, not streaming frame-by-frame.
+Package dependencies — the GUI depends on all engines; the engines never depend on the GUI.
 
-Checklist (copy to docs):
-```
-[ ] Record → analyse populates all panels
-[ ] Upload .wav / .flac / .mp3 each works
-[ ] Confidence + stress gauges update
-[ ] Explanation lists top feature groups
-[ ] History row added per run
-[ ] Export creates reports/report_*.txt and appends history.csv
-[ ] No-model mode shows stress only, no crash
-[ ] runtests("tests/test_pipeline.m") all pass
-```
+```mermaid
+flowchart TB
+    GUI["+gui<br/>SERApp"]
+    SIG["+sigproc<br/>preprocessAudio · extractFeatures"]
+    AI["+ai<br/>buildCNNLSTM · trainEmotionModel · predictEmotion<br/>stressEngine · explainPrediction · ravdessDatastore"]
+    UT["+utils<br/>recordMic · loadAudioFile · exportReport"]
+    MOD[("models/<br/>emotionModel.mat")]
+    REP[("reports/<br/>history.csv · report_*.txt")]
+    DAT[("datasets/<br/>RAVDESS")]
 
----
+    GUI -->|uses| SIG
+    GUI -->|uses| AI
+    GUI -->|uses| UT
+    AI  -->|uses| SIG
+    AI  -->|reads| MOD
+    AI  -->|trains from| DAT
+    UT  -->|writes| REP
 
-## 12. Live demonstration script
-
-1. Launch: `gui.SERApp` (from project root, after `ai.trainEmotionModel` has produced a model).
-2. Click **Record**, say one neutral sentence → show waveform, spectrogram, MFCC populate.
-3. Read the **Emotion** label + **confidence**; read the **Stress** gauge.
-4. Open the **Explanation** panel — point to the top feature groups and the acoustic reasons.
-5. Click **Upload**, load a clearly *angry* clip → contrast the result and the explanation.
-6. Click **Export** → open `reports/report_*.txt` and `history.csv` to show persistence.
-7. Fallback: if the mic misbehaves, run `main_demo("samples/angry.wav")` — identical pipeline, no GUI risk. **Always have this fallback ready.**
-
----
-
-## 13. Documentation templates (`docs/`)
-
-**SRS skeleton**
-- Purpose, scope, definitions.
-- **Functional:** FR1 record ≤30 s; FR2 accept wav/flac/mp3; FR3 classify into 5 emotions with confidence; FR4 estimate 3-level stress; FR5 show waveform/spectrogram/MFCC; FR6 explain prediction; FR7 export CSV + report.
-- **Non-functional:** NFR1 analyse a 4 s clip < 1 s on CPU; NFR2 GUI responsive (progress dialog during analysis); NFR3 runs on MATLAB R2021b+ with Audio + Deep Learning Toolboxes; NFR4 graceful degradation without a model; NFR5 reproducible training (`rng` seed).
-
-**UML to produce** (any tool; describe in text in the report):
-- **Use case:** actor *User* → Record, Upload, View results, View explanation, Export.
-- **Activity:** acquire → preprocess → extract → [model?] → predict + stress → explain → display → export.
-- **Sequence:** GUI → DSP.preprocess → DSP.extract → AI.predict → AI.stress → AI.explain → GUI.display.
-- **Class:** `SERApp` ──uses──> packages `dsp`, `ai`, `utils`; data structs `feat`, `pred`, `stress`, `xai`.
-
-**Report structure:** Abstract · Introduction · Literature review · Methodology (these 3 modules) · Implementation · Experiments & results (confusion matrix, cross-corpus, latency) · Limitations (acted data, unsupervised stress, per-utterance not streaming) · Conclusion & future work.
-
----
-
-## 14. Advanced features — ranked by (impact ÷ effort)
-
-| Feature | Impact | Effort | Verdict |
-|---|---|---|---|
-| Real-time emotion **timeline** (slide a window, plot label over time) | High | Low–Med | **Do first** — visually impressive, reuses the pipeline |
-| **PDF report** generation (`exportgraphics`/Report Generator) | Med | Low | Easy polish |
-| **Trend analytics** over history (counts, avg confidence) | Med | Low | Easy, good for the dashboard |
-| **Audio database** management (catalog past clips + results) | Med | Med | Useful, moderate work |
-| **Speaker identification** (i-vector/x-vector or simple GMM) | High | High | Strong but a project on its own |
-| **Multi-speaker / diarization** | High | High | Hard; only if time allows |
-| **Voice biometrics** | Med | High | Skip for an FYP scope |
-
-Start with the **timeline** + **PDF/analytics** — high return for low risk.
-
----
-
-## How to run
-
-```matlab
-cd SER_Stress_System          % project root, so +sigproc/+ai/+gui are on the path
-% 1) point at the RAVDESS root (labels are parsed from filenames):
-ai.trainEmotionModel("datasets/audio_speech_actors_01-24")
-% 2) command-line end-to-end:
-main_demo("path\to\clip.wav")   % or main_demo to use the mic
-% 3) GUI:
-gui.SERApp
-% 4) tests:
-runtests("tests/test_pipeline.m")
+    classDef ui fill:#37474F,color:#fff,stroke:#263238;
+    classDef ai fill:#EF6C00,color:#fff,stroke:#E65100;
+    classDef proc fill:#2E7D32,color:#fff,stroke:#1B5E20;
+    classDef store fill:#616161,color:#fff,stroke:#424242;
+    class GUI ui;
+    class AI ai;
+    class SIG,UT proc;
+    class MOD,REP,DAT store;
 ```
 
-**Requirements:** MATLAB **R2021b+**, **Audio Toolbox**, **Deep Learning Toolbox**. A microphone for live capture. The stress engine and all plots work without a trained model; emotion + XAI need `models/emotionModel.mat`.
+---
 
-## Honest scope statement
+## Inference sequence
 
-This is a complete, runnable **scaffold**: the DSP and stress paths are fully functional and unit-tested in logic; the model architecture and training pipeline are correct MATLAB but **untrained** — accuracy depends entirely on the dataset you supply and train on. "Production-quality" here means clean structure, error handling, and graceful degradation — not a benchmarked, deployed product. Train, then report the real numbers.
+```mermaid
+sequenceDiagram
+    actor User
+    participant GUI as gui.SERApp
+    participant SP as sigproc
+    participant AI as ai
+    participant FS as Storage
+    User->>GUI: Record / Upload clip
+    GUI->>SP: preprocessAudio(x, fs)
+    SP-->>GUI: clean signal + framing meta
+    GUI->>SP: extractFeatures(pp)
+    SP-->>GUI: feat (sequence + summary)
+    GUI->>AI: predictEmotion(feat)
+    AI-->>GUI: label + confidence + scores
+    GUI->>AI: stressEngine(feat)
+    AI-->>GUI: stress level + index
+    GUI->>AI: explainPrediction(feat, pred, stress)
+    AI-->>GUI: feature importance + reasons
+    GUI->>FS: exportReport(record)
+    FS-->>GUI: file path
+    GUI-->>User: plots, gauges, explanation
+```
+
+---
+
+## Results
+
+> Fill these in from your own training run — do **not** publish placeholder numbers. After `ai.trainEmotionModel`, the validation accuracy is printed and a confusion matrix figure is shown.
+
+| Metric | Value |
+|---|---|
+| Classes | Neutral, Happy, Sad, Angry, Fear |
+| Train / val split | 80 / 20 (stratified) |
+| Validation accuracy | _report yours_ |
+| Per-class F1 | _report yours_ |
+| Cross-corpus accuracy (unseen set) | _report yours_ |
+| Inference latency (4 s clip, CPU) | _report yours_ |
+
+For a defensible viva, also report a confusion matrix and a cross-corpus test (train on RAVDESS, test on TESS/SAVEE) to show generalisation rather than memorisation.
+
+---
+
+## Explainability & stress
+
+**Explainability** uses occlusion sensitivity: each feature group (MFCC, Delta, Delta-Delta, pitch, energy, ZCR, spectral) is zeroed in turn and the model is re-run; the drop in the predicted-class probability ranks that group's influence on *this* clip. A natural-language layer then phrases it, e.g. *"high energy + fast speaking rate + high pitch variation contributed to the Angry prediction."*
+
+**Stress** is an unsupervised acoustic index, **not** a trained class — no standard SER corpus carries a stress label. It is a weighted blend of pitch instability (0.30), energy variation (0.25), speaking rate (0.20), pitch level (0.15) and spectral flux (0.10), thresholded into Low (<0.40) / Moderate / High (>=0.70). The normalisation ranges are placeholders: **calibrate them on your own relaxed-vs-stressed recordings** before making any quantitative claim, and state this in the report.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Unable to resolve the name 'sigproc.preprocessAudio'` | Not in project root, or `cd`'d into a `+` folder | `cd` to the folder that *contains* `+sigproc` |
+| Package passes once then errors | A package named after a reserved namespace (e.g. `dsp` clashes with DSP System Toolbox) | Rename it; never reuse a built-in namespace |
+| Spectrogram blank / `Expected X to be ... double` in GUI | `spectrogram()` has no `spectrogram(ax,...)` syntax | Compute the STFT with output args, then `imagesc(ax, T, F, ...)` |
+| `trainNetwork ... Invalid network ... Layer 'pool1'` | `sequenceInputLayer` default `MinLength=1` fails the pooling check | Pass `MinLength` = shortest training sequence to `buildCNNLSTM` |
+| `Undefined function 'audioFeatureExtractor' / 'convolution1dLayer'` | Missing toolbox / MATLAB < R2021b | Install Audio + Deep Learning Toolboxes; update MATLAB |
+
+---
+
+## Limitations
+
+- Trained on **acted** emotion (RAVDESS) — the standard limitation of the field; real-world spontaneous speech differs.
+- RAVDESS is small (~1.4k speech clips) and class-imbalanced (Neutral has ~half the clips of other classes) → modest accuracy, watch for overfitting. Add CREMA-D and/or augmentation to improve.
+- **Per-utterance**, not frame-by-frame streaming — "real-time" means near-real-time per clip.
+- Stress index is heuristic and **uncalibrated** by default.
+
+---
+
+## Roadmap
+
+- [ ] Data augmentation (`audioDataAugmenter`: pitch shift, time stretch, additive noise)
+- [ ] CREMA-D support + cross-corpus evaluation
+- [ ] Real-time emotion **timeline** (sliding window over a longer recording)
+- [ ] PDF report via Report Generator / `exportgraphics`
+- [ ] Trend analytics over `history.csv`
+- [ ] Migrate `trainNetwork` → `trainnet` for R2024a+
+
+---
+
+## Thesis figure captions
+
+> IEEE-style captions for the diagrams above — paste under each rendered figure.
+
+- **Fig. 1.** Layered architecture of the proposed real-time speech emotion and stress recognition framework, comprising input, signal-processing, feature, AI, explainability, presentation and storage layers implemented as decoupled MATLAB packages.
+- **Fig. 2.** Hybrid 1-D CNN–BiLSTM classification pipeline, showing tensor flow from a 48-channel per-frame feature sequence through two convolution–pooling blocks, a bidirectional LSTM, and dense–softmax layers to a five-class emotion posterior.
+- **Fig. 3.** Data-flow diagram of a single inference, tracing the speech signal from acquisition through preprocessing, feature extraction, parallel emotion and stress estimation, explanation, visualisation and report logging.
+- **Fig. 4.** Component (package) dependency diagram of the MATLAB implementation, illustrating the unidirectional dependence of the presentation layer on the signal-processing and AI engines.
+- **Fig. 5.** Runtime interaction (sequence) diagram for one prediction, detailing the message exchange between the GUI, signal-processing, AI and storage components.
+
+---
+
+## Dataset & citation
+
+This project uses the **RAVDESS** speech set (CC BY-NC-SA 4.0). If you publish, cite:
+
+> S. R. Livingstone and F. A. Russo, "The Ryerson Audio-Visual Database of Emotional Speech and Song (RAVDESS): A dynamic, multimodal set of facial and vocal expressions in North American English," *PLoS ONE*, vol. 13, no. 5, e0196391, 2018.
+
+Verify the exact citation and license terms on the official RAVDESS release page before redistribution.
+
+---
+
+## Design document
+
+The full engineering design — development roadmap, dataset comparison, per-feature rationale, hyperparameters, testing strategy, SRS/UML templates, and advanced-feature ranking — lives in **[`docs/DESIGN.md`](docs/DESIGN.md)**.
+
+## License
+
+No license is set yet. Add a `LICENSE` file (MIT is common for student projects) and note that RAVDESS itself is CC BY-NC-SA 4.0, which restricts commercial use of the data.
