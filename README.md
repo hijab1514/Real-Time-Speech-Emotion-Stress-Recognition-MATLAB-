@@ -215,15 +215,6 @@ For a defensible viva, also report a confusion matrix and a cross-corpus test (t
 
 ---
 
-## Thesis figure captions
-
-> IEEE-style captions for the diagrams above — paste under each rendered figure.
-
-- **Fig. 1.** Layered architecture of the proposed real-time speech emotion and stress recognition framework, comprising input, signal-processing, feature, AI, explainability, presentation and storage layers implemented as decoupled MATLAB packages.
-- **Fig. 2.** Hybrid 1-D CNN–BiLSTM classification pipeline, showing tensor flow from a 48-channel per-frame feature sequence through two convolution–pooling blocks, a bidirectional LSTM, and dense–softmax layers to a five-class emotion posterior.
-- **Fig. 3.** Data-flow diagram of a single inference, tracing the speech signal from acquisition through preprocessing, feature extraction, parallel emotion and stress estimation, explanation, visualisation and report logging.
-- **Fig. 4.** Component (package) dependency diagram of the MATLAB implementation, illustrating the unidirectional dependence of the presentation layer on the signal-processing and AI engines.
-- **Fig. 5.** Runtime interaction (sequence) diagram for one prediction, detailing the message exchange between the GUI, signal-processing, AI and storage components.
 
 ---
 
