@@ -64,19 +64,9 @@ The 48 feature channels = MFCC(13) + Delta(13) + Delta-Delta(13) + 5 spectral (c
 
 ## Data flow
 
-```mermaid
-flowchart LR
-    U(("User")) -->|speech / file| AQ["Audio Acquisition"]
-    AQ -->|raw signal| DSP["DSP Engine<br/>+sigproc"]
-    DSP -->|clean signal| FE["Feature Engine<br/>+sigproc"]
-    FE -->|feature sequence| AI["CNN-LSTM<br/>+ai"]
-    FE -->|summary vector| ST["Stress Engine<br/>+ai"]
-    AI -->|emotion + scores| XAI["Explainable AI<br/>+ai"]
-    ST -->|stress index| XAI
-    XAI -->|results + reasons| GUI["GUI Dashboard<br/>+gui"]
-    GUI -->|append| DS[("history.csv / reports")]
-    GUI -->|display| U
-```
+<p align="center">
+  <img src="data_flow (1).png" alt="Architecture Diagram" width="100%">
+</p>
 
 ---
 
