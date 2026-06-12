@@ -13,25 +13,6 @@ Speak into the mic or upload a clip, and the system returns **(1)** the emotion 
 <p align="center"><img src="docs/screenshot.png" alt="SER GUI" width="820"></p>
 
 ---
-
-## Table of contents
-- [Features](#features)
-- [System architecture](#system-architecture)
-- [How the model works](#how-the-model-works)
-- [Data flow](#data-flow)
-- [Quickstart](#quickstart)
-- [Project structure](#project-structure)
-- [Component diagram](#component-diagram)
-- [Inference sequence](#inference-sequence)
-- [Results](#results)
-- [Explainability & stress](#explainability--stress)
-- [Troubleshooting](#troubleshooting)
-- [Limitations](#limitations)
-- [Roadmap](#roadmap)
-- [Thesis figure captions](#thesis-figure-captions)
-- [Dataset & citation](#dataset--citation)
-- [Design document](#design-document)
-
 ---
 
 ## Features
