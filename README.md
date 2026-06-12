@@ -5,7 +5,6 @@
 ![MATLAB](https://img.shields.io/badge/MATLAB-R2021b%2B-orange)
 ![Audio Toolbox](https://img.shields.io/badge/Audio%20Toolbox-required-blue)
 ![Deep Learning Toolbox](https://img.shields.io/badge/Deep%20Learning%20Toolbox-required-blue)
-![Status](https://img.shields.io/badge/status-final--year%20project-success)
 
 Speak into the mic or upload a clip, and the system returns **(1)** the emotion with a confidence score, **(2)** a Low/Moderate/High stress level, and **(3)** a plain-language explanation of *why* — alongside live waveform, spectrogram and MFCC views.
 
