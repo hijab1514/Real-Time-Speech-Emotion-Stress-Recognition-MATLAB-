@@ -27,68 +27,10 @@ Speak into the mic or upload a clip, and the system returns **(1)** the emotion 
 
 ---
 
-## System architecture
-
-Seven layers, from microphone to stored report. The GUI reaches the engines only through `sigproc.*` and `ai.*`, so no analysis logic leaks into the interface.
-
-```mermaid
-flowchart TB
-    subgraph L1["1 · Input Layer  ·  +utils"]
-        A1["Microphone capture"]
-        A2["File upload<br/>.wav / .mp3 / .flac"]
-    end
-    subgraph L2["2 · Signal Processing  ·  +sigproc"]
-        B1["Mono + Resample 16 kHz"]
-        B2["Pre-emphasis + Denoise"]
-        B3["VAD + Silence removal"]
-        B4["Normalize + Frame"]
-    end
-    subgraph L3["3 · Feature Layer  ·  +sigproc"]
-        C1["MFCC + Delta + Delta-Delta"]
-        C2["Spectral: centroid / flux / rolloff / entropy"]
-        C3["Prosodic: pitch / energy / ZCR"]
-        C4["Sequence [F x T] + summary vector"]
-    end
-    subgraph L4["4 · AI Layer  ·  +ai"]
-        D1["1D CNN — feature learning"]
-        D2["BiLSTM — temporal modeling"]
-        D3["Dense + Softmax — emotion"]
-        D4["Stress engine — acoustic index"]
-    end
-    subgraph L5["5 · Explainability  ·  +ai"]
-        E1["Occlusion sensitivity"]
-        E2["Natural-language reasoning"]
-    end
-    subgraph L6["6 · Presentation  ·  +gui"]
-        F1["Waveform / Spectrogram / MFCC"]
-        F2["Emotion + Confidence + Stress"]
-        F3["Explanation + History"]
-    end
-    subgraph L7["7 · Storage  ·  +utils"]
-        G1[("history.csv")]
-        G2[("PDF / text reports")]
-    end
-
-    L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> L7
-
-    classDef input fill:#1565C0,color:#fff,stroke:#0D47A1;
-    classDef proc  fill:#2E7D32,color:#fff,stroke:#1B5E20;
-    classDef ai    fill:#EF6C00,color:#fff,stroke:#E65100;
-    classDef xai   fill:#6A1B9A,color:#fff,stroke:#4A148C;
-    classDef ui    fill:#37474F,color:#fff,stroke:#263238;
-    classDef store fill:#616161,color:#fff,stroke:#424242;
-
-    class A1,A2 input;
-    class B1,B2,B3,B4,C1,C2,C3,C4 proc;
-    class D1,D2,D3,D4 ai;
-    class E1,E2 xai;
-    class F1,F2,F3 ui;
-    class G1,G2 store;
-```
-
-> **Colour key:** blue = input · green = processing/feature · orange = AI · purple = explainability · gray = storage.
-
----
+## Dashboard
+<p align="center">
+  <img src="ser_dashboard.png" alt="Architecture Diagram" width="100%">
+</p>
 
 ## How the model works
 
