@@ -158,33 +158,6 @@ flowchart TB
 
 ---
 
-## Inference sequence
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant GUI as gui.SERApp
-    participant SP as sigproc
-    participant AI as ai
-    participant FS as Storage
-    User->>GUI: Record / Upload clip
-    GUI->>SP: preprocessAudio(x, fs)
-    SP-->>GUI: clean signal + framing meta
-    GUI->>SP: extractFeatures(pp)
-    SP-->>GUI: feat (sequence + summary)
-    GUI->>AI: predictEmotion(feat)
-    AI-->>GUI: label + confidence + scores
-    GUI->>AI: stressEngine(feat)
-    AI-->>GUI: stress level + index
-    GUI->>AI: explainPrediction(feat, pred, stress)
-    AI-->>GUI: feature importance + reasons
-    GUI->>FS: exportReport(record)
-    FS-->>GUI: file path
-    GUI-->>User: plots, gauges, explanation
-```
-
----
-
 ## Results
 
 > Fill these in from your own training run — do **not** publish placeholder numbers. After `ai.trainEmotionModel`, the validation accuracy is printed and a confusion matrix figure is shown.
